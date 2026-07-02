@@ -399,20 +399,23 @@ type Step interface {
 A step is constructed by a `StepFactory`:
 
 ```go
-type StepFactory func(params map[string]any) (Step, error)
+type StepFactory func(gwClient *gateway.Client, params map[string]any) (Step, error)
 ```
 
-`params` is the `params:` block from the step's config entry. The factory validates and
-typed-extracts the parameters it needs and returns the constructed step, or an error
-that aborts startup.
+`gwClient` is the shared gateway HTTP client; a step that does not call the gateway
+ignores it. `params` is the `params:` block from the step's config entry. The factory
+validates and typed-extracts the parameters it needs and returns the constructed step, or
+an error that aborts startup.
 
 ### Steps over five points
 
 1. Pick a type name and declare it as a constant.
 2. Register the factory in `init()`.
-3. Implement the constructor (`StepFactory`): parse `params`, validate, build the step.
+3. Implement the constructor (`StepFactory`): take `gwClient` and `params`, validate,
+   build the step. If the step does not connect to the gateway, take `gwClient` as `_`
+   and ignore it.
 4. Implement `Name()` and `Execute()`.
-5. If the step needs the gateway client or other injected dependencies, expose a setter
+5. If the step needs the gateway client, keep the `gwClient` the factory receives
    (see [Dependency injection](#dependency-injection)).
 
 ### Example
@@ -439,7 +442,7 @@ type ExampleStep struct {
     gwClient  *gateway.Client
 }
 
-func NewExampleStep(params map[string]any) (pipeline.Step, error) {
+func NewExampleStep(gwClient *gateway.Client, params map[string]any) (pipeline.Step, error) {
     threshold := 0
     if v, ok := params["threshold"].(int); ok {
         if v < 0 {
@@ -447,11 +450,8 @@ func NewExampleStep(params map[string]any) (pipeline.Step, error) {
         }
         threshold = v
     }
-    return &ExampleStep{threshold: threshold}, nil
+    return &ExampleStep{threshold: threshold, gwClient: gwClient}, nil
 }
-
-// SetGatewayClient satisfies gateway.ClientAware; the entrypoint calls it after construction.
-func (s *ExampleStep) SetGatewayClient(c *gateway.Client) { s.gwClient = c }
 
 func (s *ExampleStep) Name() string { return ExampleStepName }
 
@@ -480,34 +480,18 @@ edit: registration is the only wiring step.
 
 ### Dependency injection
 
-The pipeline registry constructs a step only from its `params`. Dependencies that are not
-config (the gateway client, a side-service address) are injected by the entrypoint after
-construction, via optional setter interfaces it type-asserts against.
-
-The gateway client is injected through the `gateway.ClientAware` interface
-([pkg/coordinator/gateway/client.go](../pkg/coordinator/gateway/client.go)):
+The registry passes the shared gateway client to every `StepFactory` alongside its
+`params`, so a step receives its gateway dependency directly at construction:
 
 ```go
-// in pkg/gateway
-type ClientAware interface {
-    SetGatewayClient(*Client)
-}
+func Build(typeName string, gwClient *gateway.Client, params map[string]any) (Step, error)
 ```
 
-[cmd/coordinator/main.go](../cmd/coordinator/main.go) applies it after building each step:
-
-```go
-if ga, ok := step.(gateway.ClientAware); ok {
-    ga.SetGatewayClient(gwClient)
-}
-```
-
-If a step needs the gateway client, implement `gateway.ClientAware` (a
-`SetGatewayClient(*gateway.Client)` method); the four Gateway-facing steps (`encode`,
-`prefill`, `decode`, `conditional-decode`) do. To inject a different dependency, define an
-analogous setter interface next to that dependency and add a type-assert block in
-`buildPipeline`. Keep injection optional: a step that does not implement the interface is
-left untouched.
+The four Gateway-facing steps (`encode`, `prefill`, `decode`, `conditional-decode`) keep
+the `gwClient` and reject a nil client; a step that does not call the gateway (`render`,
+`replace-media-urls`) takes the argument as `_` and ignores it. Any other dependency that
+is not config is resolved inside the factory (for example, KV/EC connectors are looked up
+by name; see [Using a connector from a step](#using-a-connector-from-a-step)).
 
 ### Using a connector from a step
 

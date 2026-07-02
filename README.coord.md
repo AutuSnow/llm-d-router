@@ -128,7 +128,7 @@ package mystep
 
 import (
     "context"
-    "github.com/llm-d/coordinator/pkg/pipeline"
+    "github.com/llm-d/llm-d-router/pkg/coordinator/pipeline"
 )
 
 func init() {
@@ -169,7 +169,7 @@ func (s *MyStep) Execute(ctx context.Context, reqCtx *pipeline.RequestContext) e
 Import your step package in `cmd/coordinator/main.go`:
 
 ```go
-import _ "github.com/llm-d/coordinator/pkg/steps/mystep"
+import _ "github.com/llm-d/llm-d-router/pkg/coordinator/steps/mystep"
 ```
 
 Then add it to the pipeline config:
